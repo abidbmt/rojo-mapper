@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+import hashlib
+import platform
+import shutil
+import subprocess
+import sys
+import tarfile
+import zipfile
+from pathlib import Path
+
+from rojo_mapper import __version__
+
+ROOT = Path(__file__).resolve().parents[1]
+BUILD = ROOT / "build" / "nuitka"
+DIST = ROOT / "dist"
+
+
+def platform_label() -> tuple[str, str, str]:
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    os_name = {"windows": "windows", "linux": "linux", "darwin": "macos"}.get(system)
+    architecture = {
+        "amd64": "x64",
+        "x86_64": "x64",
+        "arm64": "arm64",
+        "aarch64": "arm64",
+    }.get(machine)
+    if os_name is None or architecture is None:
+        raise RuntimeError(f"unsupported release platform: {system}-{machine}")
+    executable = "rojo-mapper.exe" if system == "windows" else "rojo-mapper"
+    return os_name, architecture, executable
+
+
+def run(command: list[str], *, cwd: Path = ROOT) -> None:
+    subprocess.run(command, cwd=cwd, check=True)
+
+
+def build() -> Path:
+    os_name, architecture, executable = platform_label()
+    shutil.rmtree(BUILD, ignore_errors=True)
+    DIST.mkdir(exist_ok=True)
+    run(
+        [
+            sys.executable,
+            "-m",
+            "nuitka",
+            "--mode=standalone",
+            "--assume-yes-for-downloads",
+            f"--output-dir={BUILD}",
+            f"--output-filename={executable}",
+            "--product-name=rojo-mapper",
+            f"--product-version={__version__}",
+            f"--file-version={__version__}",
+            "--nofollow-import-to=pydantic.mypy",
+            "--nofollow-import-to=pydantic.v1.*",
+            "--python-flag=-m",
+            str(ROOT / "src" / "rojo_mapper"),
+        ]
+    )
+    built_directory = BUILD / "__main__.dist"
+    if not built_directory.is_dir():
+        candidates = sorted(BUILD.glob("*.dist"))
+        if len(candidates) != 1:
+            raise RuntimeError("Nuitka did not produce exactly one standalone directory")
+        built_directory = candidates[0]
+    root_name = f"rojo-mapper-v{__version__}-{os_name}-{architecture}"
+    archive_root = BUILD / root_name
+    if archive_root.exists():
+        shutil.rmtree(archive_root)
+    built_directory.rename(archive_root)
+    binary = archive_root / executable
+    run([str(binary), "--version"])
+    run([str(binary), "--help"])
+    run([str(binary), "validate"], cwd=ROOT / "examples" / "multi-place")
+
+    if os_name == "windows":
+        archive = DIST / f"{root_name}.zip"
+        archive.unlink(missing_ok=True)
+        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as output:
+            for path in sorted(archive_root.rglob("*")):
+                if path.is_file():
+                    output.write(path, Path(root_name) / path.relative_to(archive_root))
+    else:
+        archive = DIST / f"{root_name}.tar.gz"
+        archive.unlink(missing_ok=True)
+        with tarfile.open(archive, "w:gz", format=tarfile.PAX_FORMAT) as output:
+            output.add(archive_root, arcname=root_name, recursive=True)
+    checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
+    archive.with_suffix(archive.suffix + ".sha256").write_text(
+        f"{checksum}  {archive.name}\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    return archive
+
+
+if __name__ == "__main__":
+    artifact = build()
+    print(artifact.relative_to(ROOT).as_posix())

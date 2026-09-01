@@ -1,0 +1,69 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            platform: windows-x64
+          - runner: ubuntu-latest
+            platform: linux-x64
+          - runner: macos-15-intel
+            platform: macos-x64
+          - runner: macos-15
+            platform: macos-arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
+        with:
+          cache: true
+          install: true
+      - name: Install locked dependencies
+        run: mise exec -- uv sync --frozen
+      - name: Quality gate
+        run: mise exec -- uv run pytest --cov=rojo_mapper --cov-branch --cov-report=term-missing
+      - name: Build and smoke standalone archive
+        run: mise exec -- uv run python scripts/build_release.py
+      - name: Attest archive provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        with:
+          subject-path: "dist/rojo-mapper-v*"
+      - name: Upload release archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rojo-mapper-${{ matrix.platform }}
+          path: dist/rojo-mapper-v*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: rojo-mapper-*
+          path: dist
+          merge-multiple: true
+      - name: Create combined SHA-256 manifest
+        working-directory: dist
+        run: sha256sum *.zip *.tar.gz > SHA256SUMS
+      - name: Publish generated-notes release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" dist/* --verify-tag --generate-notes --title "${GITHUB_REF_NAME}"

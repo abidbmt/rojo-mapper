@@ -1,0 +1,66 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rojo-mapper"
+version = "0.1.0"
+description = "Opinionated single-target Rojo project mapper"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.14"
+authors = [{ name = "rojo-mapper contributors" }]
+dependencies = [
+  "pydantic>=2.12,<3",
+  "rich>=14,<15",
+  "typer>=0.16,<1",
+  "watchfiles>=1.1,<2",
+  "psutil>=7,<8",
+]
+
+[project.scripts]
+rojo-mapper = "rojo_mapper.cli:main"
+
+[dependency-groups]
+dev = [
+  "coverage[toml]>=7.10,<8",
+  "nuitka>=4.0.2,<5",
+  "pyright>=1.1.411,<2",
+  "pytest>=8.4,<9",
+  "pytest-cov>=6.2,<8",
+  "ruff>=0.12,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rojo_mapper"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["ASYNC", "B", "E", "F", "I", "PERF", "RUF", "SIM", "UP"]
+ignore = ["ASYNC109", "COM812", "E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["ARG", "PLR2004", "SLF001"]
+
+[tool.pyright]
+include = ["src"]
+pythonVersion = "3.14"
+typeCheckingMode = "strict"
+reportMissingTypeStubs = false
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+testpaths = ["tests"]
+markers = ["integration: requires the locked Rojo executable"]
+
+[tool.coverage.run]
+branch = true
+source = ["rojo_mapper"]
+
+[tool.coverage.report]
+fail_under = 95
+show_missing = true
+skip_covered = true

@@ -1,0 +1,7 @@
+<roblox version="4">
+  <Item class="Folder" referent="RBX0">
+    <Properties>
+      <string name="Name">Map</string>
+    </Properties>
+  </Item>
+</roblox>

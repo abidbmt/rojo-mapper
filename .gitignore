@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.pyright/
+.coverage
+coverage.xml
+build/
+dist/
+nuitka-crash-report.xml
+*.egg-info/
+*.py[cod]
+.mise.local.toml
+examples/**/default.project.json
+examples/**/sourcemap.json

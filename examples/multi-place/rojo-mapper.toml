@@ -1,0 +1,13 @@
+schema = 1
+ignore = ["Source/**/*.spec.luau"]
+
+[static]
+Packages = "ReplicatedStorage.Packages"
+
+[cloud]
+universe_id = 999
+
+[cloud.places]
+Common = 100
+Main = 111
+Place2 = 222

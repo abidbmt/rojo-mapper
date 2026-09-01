@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-latest, ubuntu-latest, macos-15-intel, macos-15]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
+        with:
+          cache: true
+          install: true
+      - name: Install locked dependencies
+        run: mise exec -- uv sync --frozen
+      - name: Ruff format
+        run: mise exec -- uv run ruff format --check .
+      - name: Ruff lint
+        run: mise exec -- uv run ruff check .
+      - name: Strict Pyright
+        run: mise exec -- uv run pyright
+      - name: Tests and branch coverage
+        run: mise exec -- uv run pytest --cov=rojo_mapper --cov-branch --cov-report=term-missing

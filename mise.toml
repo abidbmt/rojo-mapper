@@ -1,0 +1,19 @@
+[tools]
+python = "3.14"
+uv = "0.8.13"
+rojo = "7.6.1"
+
+[tasks.sync]
+run = "uv sync --frozen"
+
+[tasks.format]
+run = "uv run ruff format ."
+
+[tasks.lint]
+run = "uv run ruff format --check . && uv run ruff check . && uv run pyright"
+
+[tasks.test]
+run = "uv run pytest --cov=rojo_mapper --cov-branch --cov-report=term-missing"
+
+[tasks.build]
+run = "uv run python scripts/build_release.py"
