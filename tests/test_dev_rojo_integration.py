@@ -35,8 +35,11 @@ def port_open() -> bool:
 def manifest_place_id(root: Path) -> int | None:
     path = root / "default.project.json"
     if not path.exists():
-        return None
-    data = json.loads(path.read_text(encoding="utf-8"))
+        return -1
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError, json.JSONDecodeError:
+        return -1
     values = data.get("servePlaceIds")
     return values[0] if values else None
 

@@ -221,6 +221,7 @@ async def _run_dev(root: Path, requested: str | None, console: Console) -> str:
     await supervisor.start()
     current_candidate = candidate
     watch_task: asyncio.Task[None] | None = None
+    ready_wait: asyncio.Task[bool] | None = None
 
     async def regenerate(_changes: set[tuple[Change, str]]) -> tuple[Path, ...] | None:
         nonlocal workspace, current_candidate
@@ -268,11 +269,25 @@ async def _run_dev(root: Path, requested: str | None, console: Console) -> str:
         return next_paths
 
     try:
+        ready = asyncio.Event()
         watch_task = asyncio.create_task(
-            watch_structural_changes(watched_paths(workspace.config), regenerate)
+            watch_structural_changes(
+                watched_paths(workspace.config),
+                regenerate,
+                ready=ready,
+            )
         )
-        await asyncio.sleep(0)
+        ready_wait = asyncio.create_task(ready.wait())
+        startup_done, _ = await asyncio.wait(
+            {ready_wait, watch_task, supervisor.failure},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if supervisor.failure in startup_done:
+            await supervisor.failure
+        if watch_task in startup_done:
+            _raise_watch_failure(watch_task)
         console.print("[green]Watching structural paths[/green]")
+
         done, _ = await asyncio.wait(
             {watch_task, supervisor.failure},
             return_when=asyncio.FIRST_COMPLETED,
@@ -280,33 +295,12 @@ async def _run_dev(root: Path, requested: str | None, console: Console) -> str:
         if supervisor.failure in done:
             await supervisor.failure
         if watch_task in done:
-            if watch_task.cancelled():
-                raise ExpectedFailure(
-                    [
-                        Diagnostic(
-                            "watcher.failed",
-                            "structural watcher task was cancelled unexpectedly",
-                            Phase.WATCHER,
-                        )
-                    ]
-                )
-            error = watch_task.exception()
-            if isinstance(error, ExpectedFailure):
-                raise error
-            if error is not None:
-                raise ExpectedFailure(
-                    [Diagnostic("watcher.failed", str(error), Phase.WATCHER)]
-                ) from error
-            raise ExpectedFailure(
-                [
-                    Diagnostic(
-                        "watcher.failed",
-                        "structural watcher terminated unexpectedly",
-                        Phase.WATCHER,
-                    )
-                ]
-            )
+            _raise_watch_failure(watch_task)
     finally:
+        if ready_wait is not None and not ready_wait.done():
+            ready_wait.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await ready_wait
         cleanup_task = asyncio.create_task(_cleanup_dev(watch_task, supervisor))
         try:
             await asyncio.shield(cleanup_task)
@@ -327,6 +321,33 @@ async def _cleanup_dev(
         await cancel_task(watch_task)
     with contextlib.suppress(ExpectedFailure):
         await supervisor.close()
+
+
+def _raise_watch_failure(watch_task: asyncio.Task[None]) -> None:
+    if watch_task.cancelled():
+        raise ExpectedFailure(
+            [
+                Diagnostic(
+                    "watcher.failed",
+                    "structural watcher task was cancelled unexpectedly",
+                    Phase.WATCHER,
+                )
+            ]
+        )
+    error = watch_task.exception()
+    if isinstance(error, ExpectedFailure):
+        raise error
+    if error is not None:
+        raise ExpectedFailure([Diagnostic("watcher.failed", str(error), Phase.WATCHER)]) from error
+    raise ExpectedFailure(
+        [
+            Diagnostic(
+                "watcher.failed",
+                "structural watcher terminated unexpectedly",
+                Phase.WATCHER,
+            )
+        ]
+    )
 
 
 async def _port_is_open(port: int) -> bool:

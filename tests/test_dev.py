@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 from pathlib import Path
 from typing import ClassVar
 from unittest.mock import AsyncMock
@@ -63,7 +64,15 @@ def reset_fake() -> None:
 def run_session(root: Path, monkeypatch, fake_watch) -> tuple[ExpectedFailure, str, FakeSupervisor]:
     monkeypatch.setattr(dev, "RojoSupervisor", FakeSupervisor)
     monkeypatch.setattr(dev, "check_rojo_version", AsyncMock(return_value="7.6.1"))
-    monkeypatch.setattr(dev, "watch_structural_changes", fake_watch)
+
+    async def confirming_watch(paths, callback, *, ready=None):
+        replacement = await callback(set())
+        if ready is not None:
+            ready.set()
+        await asyncio.sleep(0.05)
+        await fake_watch(replacement or paths, callback)
+
+    monkeypatch.setattr(dev, "watch_structural_changes", confirming_watch)
     output = Console(record=True, width=160)
     with pytest.raises(ExpectedFailure) as captured:
         asyncio.run(dev._run_dev(root, "Main", output))
@@ -159,7 +168,7 @@ def test_metadata_restart_stops_before_commit_and_warns(tmp_path: Path, monkeypa
     error, output, supervisor = run_session(tmp_path, monkeypatch, fake_watch)
     assert error.diagnostics[0].kind == "watcher.failed"
     assert supervisor.order == ["start:1", "stop", "start:2", "close"]
-    assert writes == [("write", None), ("write", 100)]
+    assert writes == [("write", None), ("write", 100), ("write", 100)]
     assert "reconnect_required" in output
     assert "automatic reconnection is not expected" in output
     manifest = __import__("json").loads(
@@ -189,16 +198,16 @@ def test_restart_commit_failure_is_fatal_after_stop(tmp_path: Path, monkeypatch)
     calls = 0
     real_write = watcher.write_candidate
 
-    def fail_second_write(config, candidate):
+    def fail_third_write(config, candidate):
         nonlocal calls
         calls += 1
-        if calls == 2:
+        if calls == 3:
             raise ExpectedFailure(
                 [Diagnostic("filesystem.write_failed", "denied", Phase.FILESYSTEM)]
             )
         return real_write(config, candidate)
 
-    monkeypatch.setattr(dev, "write_candidate", fail_second_write)
+    monkeypatch.setattr(dev, "write_candidate", fail_third_write)
 
     async def fake_watch(_paths, callback):
         (tmp_path / "rojo-mapper.toml").write_text(
@@ -232,6 +241,58 @@ def test_watcher_cancellation_is_fatal(tmp_path: Path, monkeypatch) -> None:
 
     error, _, _ = run_session(tmp_path, monkeypatch, fake_watch)
     assert error.diagnostics[0].kind == "watcher.failed"
+
+
+def test_watcher_startup_failure_cancels_ready_wait(tmp_path: Path, monkeypatch) -> None:
+    setup_project(tmp_path)
+    monkeypatch.setattr(dev, "RojoSupervisor", FakeSupervisor)
+    monkeypatch.setattr(dev, "check_rojo_version", AsyncMock(return_value="7.6.1"))
+
+    async def fail_watch(_paths, _callback, *, ready=None):
+        raise RuntimeError("startup failed")
+
+    monkeypatch.setattr(dev, "watch_structural_changes", fail_watch)
+    with pytest.raises(ExpectedFailure) as captured:
+        asyncio.run(dev._run_dev(tmp_path, "Main", Console(record=True)))
+    assert captured.value.diagnostics[0].kind == "watcher.failed"
+    assert FakeSupervisor.instances[0].order == ["start:1", "close"]
+
+
+def test_run_dev_cancellation_finishes_cleanup(tmp_path: Path, monkeypatch) -> None:
+    setup_project(tmp_path)
+    monkeypatch.setattr(dev, "RojoSupervisor", FakeSupervisor)
+    monkeypatch.setattr(dev, "check_rojo_version", AsyncMock(return_value="7.6.1"))
+
+    async def never_watch(_paths, _callback, *, ready=None):
+        if ready is not None:
+            ready.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr(dev, "watch_structural_changes", never_watch)
+
+    async def scenario() -> None:
+        task = asyncio.create_task(dev._run_dev(tmp_path, "Main", Console(record=True)))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+    assert FakeSupervisor.instances[0].order == ["start:1", "close"]
+
+
+def test_clean_watcher_termination_is_fatal() -> None:
+    async def scenario() -> None:
+        async def complete() -> None:
+            return
+
+        task = asyncio.create_task(complete())
+        await task
+        with pytest.raises(ExpectedFailure) as captured:
+            dev._raise_watch_failure(task)
+        assert captured.value.diagnostics[0].kind == "watcher.failed"
+
+    asyncio.run(scenario())
 
 
 def test_watched_paths_reconfigure_static_roots(tmp_path: Path) -> None:
@@ -296,3 +357,81 @@ def test_live_watchfiles_backend_observes_source_addition(tmp_path: Path) -> Non
         await watcher.cancel_task(task)
 
     asyncio.run(scenario())
+
+
+def test_main_loop_rojo_failure_after_ready(tmp_path: Path, monkeypatch) -> None:
+    setup_project(tmp_path)
+    monkeypatch.setattr(dev, "RojoSupervisor", FakeSupervisor)
+    monkeypatch.setattr(dev, "check_rojo_version", AsyncMock(return_value="7.6.1"))
+
+    async def steady_watch(_paths, callback, *, ready=None):
+        replacement = await callback(set())
+        assert replacement is None or replacement is not None
+        if ready is not None:
+            ready.set()
+        await asyncio.sleep(0.05)
+        supervisor = FakeSupervisor.instances[0]
+        supervisor.failure.set_exception(
+            ExpectedFailure([Diagnostic("rojo.failed", "late exit", Phase.ROJO)])
+        )
+        await asyncio.Future()
+
+    monkeypatch.setattr(dev, "watch_structural_changes", steady_watch)
+    with pytest.raises(ExpectedFailure) as captured:
+        asyncio.run(dev._run_dev(tmp_path, "Main", Console(record=True)))
+    assert captured.value.diagnostics[0].kind == "rojo.failed"
+
+
+def test_startup_cancel_abandons_ready_wait(tmp_path: Path, monkeypatch) -> None:
+    setup_project(tmp_path)
+    monkeypatch.setattr(dev, "RojoSupervisor", FakeSupervisor)
+    monkeypatch.setattr(dev, "check_rojo_version", AsyncMock(return_value="7.6.1"))
+
+    async def silent_watch(_paths, _callback, *, ready=None):
+        await asyncio.Future()
+
+    monkeypatch.setattr(dev, "watch_structural_changes", silent_watch)
+
+    async def scenario() -> None:
+        task = asyncio.create_task(dev._run_dev(tmp_path, "Main", Console(record=True)))
+        await asyncio.sleep(0.02)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+    assert FakeSupervisor.instances[0].order == ["start:1", "close"]
+
+
+def test_cleanup_cancel_still_closes_supervisor(tmp_path: Path, monkeypatch) -> None:
+    setup_project(tmp_path)
+    monkeypatch.setattr(dev, "RojoSupervisor", FakeSupervisor)
+    monkeypatch.setattr(dev, "check_rojo_version", AsyncMock(return_value="7.6.1"))
+    entered_cleanup = asyncio.Event()
+    real_cleanup = dev._cleanup_dev
+
+    async def slow_cleanup(watch_task, supervisor) -> None:
+        entered_cleanup.set()
+        await asyncio.sleep(0.5)
+        await real_cleanup(watch_task, supervisor)
+
+    monkeypatch.setattr(dev, "_cleanup_dev", slow_cleanup)
+
+    async def steady_watch(_paths, _callback, *, ready=None):
+        if ready is not None:
+            ready.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr(dev, "watch_structural_changes", steady_watch)
+
+    async def driver() -> None:
+        outer = asyncio.create_task(dev._run_dev(tmp_path, "Main", Console(record=True)))
+        await asyncio.sleep(0.2)
+        outer.cancel()
+        await asyncio.wait_for(entered_cleanup.wait(), timeout=5)
+        outer.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await outer
+
+    asyncio.run(driver())
+    assert FakeSupervisor.instances[0].order == ["start:1", "close"]

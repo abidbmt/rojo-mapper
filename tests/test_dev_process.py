@@ -212,6 +212,87 @@ def test_watch_iterator_reconfiguration_and_termination(tmp_path: Path, monkeypa
     asyncio.run(scenario())
 
 
+def test_startup_subscription_confirms_preexisting_race_change(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    subscribed = asyncio.Event()
+    confirmed = asyncio.Event()
+    added = tmp_path / "Added.luau"
+    added.write_text("return {}", encoding="utf-8")
+
+    def fake_awatch(*_paths, **_kwargs):
+        async def iterator():
+            subscribed.set()
+            await asyncio.Future()
+            yield set()
+
+        return iterator()
+
+    async def scenario() -> None:
+        monkeypatch.setattr(watcher, "awatch", fake_awatch)
+        ready = asyncio.Event()
+
+        async def callback(changes):
+            assert subscribed.is_set()
+            if not changes and added.exists():
+                confirmed.set()
+            return None
+
+        task = asyncio.create_task(
+            watcher.watch_structural_changes((tmp_path,), callback, ready=ready)
+        )
+        await asyncio.wait_for(ready.wait(), timeout=2)
+        assert confirmed.is_set()
+        await watcher.cancel_task(task)
+
+    asyncio.run(scenario())
+
+
+def test_reconfiguration_subscribes_before_confirming_rescan(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    old = tmp_path / "old"
+    new = tmp_path / "new"
+    old.mkdir()
+    new.mkdir()
+    subscriptions: list[tuple[Path, ...]] = []
+    confirmed = asyncio.Event()
+
+    def fake_awatch(*paths, **_kwargs):
+        async def iterator():
+            subscriptions.append(paths)
+            if paths == (old,):
+                yield {(Change.modified, str(old / "config"))}
+            else:
+                await asyncio.Future()
+                yield set()
+
+        return iterator()
+
+    async def scenario() -> None:
+        monkeypatch.setattr(watcher, "awatch", fake_awatch)
+        ready = asyncio.Event()
+
+        async def callback(changes):
+            if changes:
+                (new / "DuringGap.luau").write_text("return {}", encoding="utf-8")
+                return (new,)
+            if subscriptions[-1] == (new,):
+                assert (new / "DuringGap.luau").exists()
+                confirmed.set()
+            return None
+
+        task = asyncio.create_task(watcher.watch_structural_changes((old,), callback, ready=ready))
+        await asyncio.wait_for(ready.wait(), timeout=2)
+        await asyncio.wait_for(confirmed.wait(), timeout=2)
+        assert subscriptions == [(old,), (new,)]
+        await watcher.cancel_task(task)
+
+    asyncio.run(scenario())
+
+
 def test_write_candidate_read_failure(tmp_path: Path, monkeypatch) -> None:
     source = tmp_path / "Source" / "Places" / "Main" / "Server"
     source.mkdir(parents=True)
@@ -231,3 +312,86 @@ def test_write_candidate_read_failure(tmp_path: Path, monkeypatch) -> None:
     with pytest.raises(ExpectedFailure) as captured:
         watcher.write_candidate(workspace.config, candidate)
     assert captured.value.diagnostics[0].kind == "filesystem.read_failed"
+
+
+def test_confirming_rescan_replaces_paths_before_first_event(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    old = tmp_path / "old"
+    new = tmp_path / "new"
+    old.mkdir()
+    new.mkdir()
+    subscriptions: list[tuple[Path, ...]] = []
+    ready = asyncio.Event()
+    entered_new = asyncio.Event()
+
+    def fake_awatch(*paths, **_kwargs):
+        async def iterator():
+            subscriptions.append(paths)
+            if paths == (new,):
+                entered_new.set()
+                await asyncio.Future()
+            await asyncio.Future()
+            yield set()
+
+        return iterator()
+
+    async def scenario() -> None:
+        monkeypatch.setattr(watcher, "awatch", fake_awatch)
+
+        async def callback(changes):
+            if not changes:
+                return (new,)
+            return None
+
+        task = asyncio.create_task(watcher.watch_structural_changes((old,), callback, ready=ready))
+        await asyncio.wait_for(entered_new.wait(), timeout=2)
+        await asyncio.wait_for(ready.wait(), timeout=2)
+        assert subscriptions[0] == (old,)
+        assert subscriptions[-1] == (new,)
+        await watcher.cancel_task(task)
+
+    asyncio.run(scenario())
+
+
+def test_write_candidate_temp_creation_failure(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "Source" / "Places" / "Main" / "Server"
+    source.mkdir(parents=True)
+    (source / "A.luau").write_text("return {}", encoding="utf-8")
+    (tmp_path / "rojo-mapper.toml").write_text("schema = 1\n", encoding="utf-8")
+    workspace = load_workspace(tmp_path)
+    candidate = candidate_for(workspace, "Main")
+
+    def fail_mkstemp(*_args, **_kwargs):
+        raise OSError("no temp")
+
+    monkeypatch.setattr(watcher.tempfile, "mkstemp", fail_mkstemp)
+    with pytest.raises(ExpectedFailure) as captured:
+        watcher.write_candidate(workspace.config, candidate)
+    assert captured.value.diagnostics[0].kind == "filesystem.write_failed"
+
+
+def test_write_candidate_stream_failure_closes_and_unlinks(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "Source" / "Places" / "Main" / "Server"
+    source.mkdir(parents=True)
+    (source / "A.luau").write_text("return {}", encoding="utf-8")
+    (tmp_path / "rojo-mapper.toml").write_text("schema = 1\n", encoding="utf-8")
+    workspace = load_workspace(tmp_path)
+    candidate = candidate_for(workspace, "Main")
+
+    def fail_fdopen(_descriptor, _mode):
+        raise OSError("no stream")
+
+    failures: list[str] = []
+
+    def fail_unlink(self, *args, **kwargs):
+        failures.append(str(self))
+        raise OSError("unlink denied")
+
+    monkeypatch.setattr(watcher.os, "fdopen", fail_fdopen)
+    monkeypatch.setattr(watcher.Path, "unlink", fail_unlink)
+    with pytest.raises(ExpectedFailure) as captured:
+        watcher.write_candidate(workspace.config, candidate)
+    assert captured.value.diagnostics[0].kind == "filesystem.write_failed"
+    assert failures

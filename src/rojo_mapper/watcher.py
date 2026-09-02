@@ -21,19 +21,43 @@ SOURCEMAP_NAME = "sourcemap.json"
 async def watch_structural_changes(
     paths: tuple[Path, ...],
     callback: Callable[[set[tuple[Change, str]]], Awaitable[tuple[Path, ...] | None]],
+    *,
+    ready: asyncio.Event | None = None,
 ) -> None:
     current = paths
     while True:
         iterator = awatch(
             *current, debounce=150, step=50, rust_timeout=1000, yield_on_timeout=False
         )
-        async for changes in iterator:
-            replacement = await callback(changes)
+        pending = asyncio.create_task(anext(iterator))
+        try:
+            # Starting __anext__ enters RustNotify before its first suspension. The
+            # confirming rescan therefore closes the pre-subscription race.
+            await asyncio.sleep(0)
+            replacement = await callback(set())
             if replacement is not None and replacement != current:
                 current = replacement
-                break
-        else:
-            raise RuntimeError("watchfiles iterator terminated unexpectedly")
+                continue
+            if ready is not None:
+                ready.set()
+
+            while True:
+                try:
+                    changes = await pending
+                except StopAsyncIteration:
+                    raise RuntimeError("watchfiles iterator terminated unexpectedly") from None
+                replacement = await callback(changes)
+                if replacement is not None and replacement != current:
+                    current = replacement
+                    break
+                pending = asyncio.create_task(anext(iterator))
+        finally:
+            if not pending.done():
+                pending.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await pending
+            with contextlib.suppress(RuntimeError):
+                await iterator.aclose()
 
 
 def watched_paths(config: Config) -> tuple[Path, ...]:
