@@ -5,6 +5,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import sysconfig
 import tarfile
 import zipfile
 from pathlib import Path
@@ -36,9 +37,39 @@ def run(command: list[str], *, cwd: Path = ROOT) -> None:
     subprocess.run(command, cwd=cwd, check=True)
 
 
+def _ensure_venv_libpython() -> None:
+    # Nuitka standalone resolves the Python dylib relative to the running
+    # venv (sys.prefix). uv venvs on macOS do not carry libpython, while the
+    # base interpreter does. Symlink it into place so the link step succeeds.
+    if platform.system().lower() != "darwin":
+        return
+    names = dict.fromkeys(
+        [
+            sysconfig.get_config_var("LDLIBRARY"),
+            sysconfig.get_config_var("LIBRARY"),
+            "libpython3.14.dylib",
+        ]
+    )
+    target_dir = Path(sys.prefix, "lib")
+    base_dir = Path(sys.base_prefix, "lib")
+    for name in names:
+        if not name or not str(name).endswith(".dylib"):
+            continue
+        target = target_dir / str(name)
+        if target.exists():
+            return
+        source = base_dir / str(name)
+        if source.exists():
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target.symlink_to(source)
+            return
+    raise RuntimeError("unable to locate a base libpython dylib for the macOS build")
+
+
 def build() -> Path:
     os_name, architecture, executable = platform_label()
     shutil.rmtree(BUILD, ignore_errors=True)
+    _ensure_venv_libpython()
     DIST.mkdir(exist_ok=True)
     run(
         [
