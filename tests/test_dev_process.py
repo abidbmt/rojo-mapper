@@ -88,7 +88,9 @@ def test_supervisor_start_output_and_clean_stop(tmp_path: Path, monkeypatch) -> 
             "create_subprocess_exec",
             AsyncMock(return_value=process),
         )
-        monkeypatch.setattr(dev, "_process_tree", lambda _pid: [])
+        monkeypatch.setattr(
+            dev.os, "killpg", lambda _pid, _sig: process.send_signal(_sig), raising=False
+        )
         await supervisor.start()
         assert "Rojo ready" in supervisor.console.export_text()
         await supervisor.stop()
