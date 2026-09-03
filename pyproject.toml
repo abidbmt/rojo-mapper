@@ -12,7 +12,7 @@ requires-python = ">=3.14"
 authors = [{ name = "rojo-mapper contributors" }]
 dependencies = [
   "pydantic>=2.12,<3",
-  "rich>=14,<15",
+  "rich>=14,<16",
   "typer>=0.16,<1",
   "watchfiles>=1.1,<2",
   "psutil>=7,<8",
