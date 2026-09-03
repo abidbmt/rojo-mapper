@@ -1,6 +1,6 @@
 [tools]
 python = "3.14"
-uv = "0.8.13"
+uv = "0.12.9"
 rojo = "7.6.1"
 
 [tasks.sync]
