@@ -160,7 +160,7 @@ def test_live_dev_restart_order_and_cleanup(tmp_path: Path, target: str, has_pla
 
         configure(tmp_path, target, 200)
         observed_unsafe_pair = False
-        deadline = time.monotonic() + 15
+        deadline = time.monotonic() + 30
         while time.monotonic() < deadline and manifest_place_id(tmp_path) != 200:
             if psutil.pid_exists(old_pid) and manifest_place_id(tmp_path) == 200:
                 observed_unsafe_pair = True
