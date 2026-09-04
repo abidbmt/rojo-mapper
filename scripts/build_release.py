@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import hashlib
 import platform
 import shutil
@@ -66,9 +67,10 @@ def _ensure_venv_libpython() -> None:
     raise RuntimeError("unable to locate a base libpython dylib for the macOS build")
 
 
-def build() -> Path:
+def build(*, clean: bool = True) -> Path:
     os_name, architecture, executable = platform_label()
-    shutil.rmtree(BUILD, ignore_errors=True)
+    if clean:
+        shutil.rmtree(BUILD, ignore_errors=True)
     _ensure_venv_libpython()
     DIST.mkdir(exist_ok=True)
     run(
@@ -127,5 +129,11 @@ def build() -> Path:
 
 
 if __name__ == "__main__":
-    artifact = build()
+    parser = argparse.ArgumentParser(description="Build the standalone release archive.")
+    parser.add_argument(
+        "--no-clean",
+        action="store_true",
+        help="reuse the existing build directory for faster local rebuilds (CI stays clean)",
+    )
+    artifact = build(clean=not parser.parse_args().no_clean)
     print(artifact.relative_to(ROOT).as_posix())
