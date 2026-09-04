@@ -27,6 +27,8 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+    env:
+      NUITKA_CACHE_DIR: ${{ github.workspace }}/.nuitka-cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
@@ -38,10 +40,18 @@ jobs:
       - name: Quality gate
         run: mise exec -- uv run pytest --cov=rojo_mapper --cov-branch --cov-report=term-missing
       - name: Restore compiler cache
+        if: runner.os != 'Windows'
         uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d # v1.2.24
         with:
-          key: nuitka-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          key: nuitka-ccache-${{ matrix.platform }}-${{ hashFiles('uv.lock', 'mise.lock') }}
           max-size: 2G
+      - name: Restore Nuitka cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.nuitka-cache
+          key: nuitka-cache-${{ matrix.platform }}-${{ hashFiles('uv.lock', 'mise.lock') }}
+          restore-keys: |
+            nuitka-cache-${{ matrix.platform }}-
       - name: Build and smoke standalone archive
         run: mise exec -- uv run python scripts/build_release.py
       - name: Attest archive provenance

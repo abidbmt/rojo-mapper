@@ -7,6 +7,7 @@ __pycache__/
 coverage.xml
 build/
 dist/
+.nuitka-cache/
 nuitka-crash-report.xml
 *.egg-info/
 *.py[cod]
