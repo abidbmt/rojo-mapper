@@ -1,6 +1,6 @@
 # rojo-mapper
 
-`rojo-mapper` generates one deterministic root `default.project.json` for an opinionated multi-place Roblox source tree. It does not generate or own `sourcemap.json`.
+`rmp` (rojo-mapper) generates one deterministic root `default.project.json` for an opinionated multi-place Roblox source tree. It does not generate or own `sourcemap.json`.
 
 ## Status
 
@@ -57,10 +57,10 @@ Static sources are opaque common directory mounts. Ignore syntax is deliberately
 ## Commands
 
 ```text
-rojo-mapper list [--format human|json]
-rojo-mapper validate [Common|Place] [--format human|json]
-rojo-mapper generate [Common|Place] [--format human|json]
-rojo-mapper dev [Common|Place]
+rmp list [--format human|json]
+rmp validate [Common|Place] [--format human|json]
+rmp generate [Common|Place] [--format human|json]
+rmp dev [Common|Place]
 ```
 
 `generate` and `dev` infer the target only when exactly one place exists. `validate` without a target validates `Common` and all places without writing. `list` never writes.

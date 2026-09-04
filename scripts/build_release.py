@@ -30,7 +30,7 @@ def platform_label() -> tuple[str, str, str]:
     }.get(machine)
     if os_name is None or architecture is None:
         raise RuntimeError(f"unsupported release platform: {system}-{machine}")
-    executable = "rojo-mapper.exe" if system == "windows" else "rojo-mapper"
+    executable = "rmp.exe" if system == "windows" else "rmp"
     return os_name, architecture, executable
 
 
@@ -82,7 +82,7 @@ def build(*, clean: bool = True) -> Path:
             "--assume-yes-for-downloads",
             f"--output-dir={BUILD}",
             f"--output-filename={executable}",
-            "--product-name=rojo-mapper",
+            "--product-name=rmp",
             f"--product-version={__version__}",
             f"--file-version={__version__}",
             "--nofollow-import-to=pydantic.mypy",
@@ -97,7 +97,7 @@ def build(*, clean: bool = True) -> Path:
         if len(candidates) != 1:
             raise RuntimeError("Nuitka did not produce exactly one standalone directory")
         built_directory = candidates[0]
-    root_name = f"rojo-mapper-v{__version__}-{os_name}-{architecture}"
+    root_name = f"rmp-v{__version__}-{os_name}-{architecture}"
     archive_root = BUILD / root_name
     if archive_root.exists():
         shutil.rmtree(archive_root)

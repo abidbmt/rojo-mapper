@@ -24,7 +24,7 @@ from rojo_mapper.service import (
 from rojo_mapper.watcher import MANIFEST_NAME, SOURCEMAP_NAME, write_candidate
 
 app = typer.Typer(
-    name="rojo-mapper",
+    name="rmp",
     help="Generate one opinionated single-target Rojo project.",
     no_args_is_help=True,
     invoke_without_command=True,
@@ -132,7 +132,7 @@ def list_command(
         payload.update(
             {
                 "targets": targets,
-                "manifest": {"path": MANIFEST_NAME, "owner": "rojo-mapper"},
+                "manifest": {"path": MANIFEST_NAME, "owner": "rmp"},
                 "sourcemap": {"path": SOURCEMAP_NAME, "owner": "Luau-LSP/Rojo"},
             }
         )
@@ -145,7 +145,7 @@ def list_command(
             for item in targets:
                 table.add_row(str(item["name"]), str(item.get("cloud_place_id", "-")))
             console.print(table)
-            console.print(f"Manifest: {MANIFEST_NAME} (rojo-mapper)")
+            console.print(f"Manifest: {MANIFEST_NAME} (rmp)")
             console.print(f"Sourcemap: {SOURCEMAP_NAME} (Luau-LSP/Rojo)")
     except ExpectedFailure as error:
         _expected_failure(command, None, output_format, error)
@@ -263,4 +263,4 @@ def _debug_details() -> dict[str, str]:
 
 
 def main() -> None:
-    app(prog_name="rojo-mapper")
+    app(prog_name="rmp")

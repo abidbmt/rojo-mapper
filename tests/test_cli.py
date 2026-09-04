@@ -41,7 +41,7 @@ def parse(result) -> dict:
 def test_version() -> None:
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert result.stdout.strip() == "0.1.1"
+    assert result.stdout.strip() == "0.2.0"
 
 
 def test_generate_infers_exactly_one_place(tmp_path: Path) -> None:
@@ -111,7 +111,7 @@ def test_list_is_sorted_reports_owners_and_cloud(tmp_path: Path) -> None:
         {"name": "Main", "cloud_place_id": 111},
         {"name": "Place2", "cloud_place_id": 222},
     ]
-    assert payload["manifest"] == {"path": "default.project.json", "owner": "rojo-mapper"}
+    assert payload["manifest"] == {"path": "default.project.json", "owner": "rmp"}
     assert payload["sourcemap"] == {"path": "sourcemap.json", "owner": "Luau-LSP/Rojo"}
     assert not (tmp_path / "default.project.json").exists()
 
@@ -226,7 +226,7 @@ def test_main_invokes_typer_app(monkeypatch) -> None:
     called: list[str] = []
     monkeypatch.setattr(cli, "app", lambda **kwargs: called.append(kwargs["prog_name"]))
     cli.main()
-    assert called == ["rojo-mapper"]
+    assert called == ["rmp"]
 
 
 def test_module_entrypoint_guard(monkeypatch) -> None:

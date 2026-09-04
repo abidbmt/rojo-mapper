@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rojo-mapper"
-version = "0.1.1"
+version = "0.2.0"
 description = "Opinionated single-target Rojo project mapper"
 readme = "README.md"
 license = "MIT"
@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
-rojo-mapper = "rojo_mapper.cli:main"
+rmp = "rojo_mapper.cli:main"
 
 [dependency-groups]
 dev = [
